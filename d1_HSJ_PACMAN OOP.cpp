@@ -2,6 +2,8 @@
 #include <allegro5/allegro_image.h>
 #include <allegro5/allegro_font.h>
 #include <allegro5/allegro_ttf.h>
+#include <allegro5/allegro_audio.h>          
+#include <allegro5/allegro_acodec.h>         
 #include <cstdio>
 #include <cmath>
 #include <iostream>
@@ -11,7 +13,7 @@
 
 using namespace std;
 
-// Game Constants
+
 const float FPS = 6.6f;
 const int SCREEN_W = 460;
 const int SCREEN_H = 550;
@@ -21,10 +23,10 @@ const char DOT = '2';
 const char EMPTY = '0';
 const char KEY = '3';
 const int TARGET_SCORE_LEVEL1 = 100;
-const int TARGET_SCORE_LEVEL2 = 150;
+const int TARGET_SCORE_LEVEL2 = 175;
 const int TARGET_SCORE_LEVEL3 = 210;
 
-// Raw map (24×24)
+
 static const char RAW_MAP[24][24] = {
     "11111111111111111111111",
     "12222222222122222222221",
@@ -51,7 +53,7 @@ static const char RAW_MAP[24][24] = {
     "11111111111111111111111"
 };
 
-// Map wrapper
+
 class Map {
     char grid[24][24];
 public:
@@ -64,7 +66,7 @@ public:
     void set(int i, int j, char v) { grid[i][j] = v; }
 };
 
-// Abstract Entity
+
 class Entity {
 protected:
     int gridX, gridY, posX, posY;
@@ -80,25 +82,34 @@ public:
     int getGridY() const { return gridY; }
 };
 
-// Pacman
+
+class Game;
+
+
 class Pacman : public Entity {
     int intent, previousIntent;
     int mouthToggle, lastMouthDir;
     ALLEGRO_BITMAP* bmp, * bmpUp, * bmpDown, * bmpLeft, * bmpRight, * bmpShut;
     int* bolaPtr, * scorePtr;
     bool hasKey;
+
+    
+    ALLEGRO_SAMPLE* sfxWaka;
+
 public:
     Pacman(int gx, int gy,
         ALLEGRO_BITMAP* base, ALLEGRO_BITMAP* u, ALLEGRO_BITMAP* d,
         ALLEGRO_BITMAP* l, ALLEGRO_BITMAP* r, ALLEGRO_BITMAP* s,
-        int* bola, int* score)
+        int* bola, int* score,
+        ALLEGRO_SAMPLE* wakaSound)
         : Entity(gx, gy),
         intent(0), previousIntent(0),
         mouthToggle(0), lastMouthDir(3),
         bmp(base), bmpUp(u), bmpDown(d),
         bmpLeft(l), bmpRight(r), bmpShut(s),
         bolaPtr(bola), scorePtr(score),
-        hasKey(false)
+        hasKey(false),
+        sfxWaka(wakaSound)
     {
     }
 
@@ -114,7 +125,7 @@ public:
     }
 
     void update(Map& map) override {
-        // Tunnel teleport
+       
         if (intent != 1 && gridY >= 23) { gridX = 10; gridY = 0; }
         else if (intent != 3 && gridY < 0) { gridX = 10; gridY = 23; }
 
@@ -123,15 +134,21 @@ public:
             if (c == DOT) {
                 map.set(gridX, gridY, EMPTY);
                 (*bolaPtr)--; (*scorePtr)++;
+                
+                if (sfxWaka)
+                    al_play_sample(sfxWaka, 0.7, 0.0, 1.0, ALLEGRO_PLAYMODE_ONCE, nullptr);
             }
             else if (c == KEY) {
                 map.set(gridX, gridY, EMPTY);
                 hasKey = true;
                 (*scorePtr) += 50;
+                
+                if (sfxWaka)
+                    al_play_sample(sfxWaka, 0.7, 0.0, 1.0, ALLEGRO_PLAYMODE_ONCE, nullptr);
             }
             };
 
-        // Movement
+     
         if (intent == 4 && map.get(gridX - 1, gridY) != WALL) {
             gridX--; lastMouthDir = 2; tryEat();
         }
@@ -145,7 +162,7 @@ public:
             gridY++; lastMouthDir = 3; tryEat();
         }
 
-        // Animate
+       
         mouthToggle++;
         if (mouthToggle % 2 == 0) bmp = bmpShut;
         else {
@@ -173,7 +190,7 @@ public:
     }
 };
 
-// Ghost Base
+
 class Ghost {
 protected:
     int gridX, gridY, posX, posY;
@@ -201,7 +218,7 @@ public:
     }
 };
 
-// RandomGhost
+
 class RandomGhost : public Ghost {
     int lastDir;
 public:
@@ -226,7 +243,7 @@ public:
             y--; lastDir = 3;
         }
         else {
-            // fallback chase
+           
             if (p.getGridX() > x && M.get(x + 1, y) != WALL && lastDir != 0) { x++; lastDir = 1; }
             else if (p.getGridX() < x && M.get(x - 1, y) != WALL && lastDir != 1) { x--; lastDir = 0; }
             else if (p.getGridY() > y && M.get(x, y + 1) != WALL && lastDir != 3) { y++; lastDir = 2; }
@@ -237,7 +254,7 @@ public:
     }
 };
 
-// BlinkyGhost (Red Ghost)
+
 class BlinkyGhost : public Ghost {
     int prevX, prevY;
     double dist(int x1, int y1, int x2, int y2) {
@@ -283,7 +300,7 @@ public:
     }
 };
 
-// PinkyGhost (Pink Ghost)
+
 class PinkyGhost : public Ghost {
     int lastDir;
 public:
@@ -309,17 +326,27 @@ public:
     }
 };
 
-// Game Class
+
 class Game {
     ALLEGRO_DISPLAY* display = nullptr;
     ALLEGRO_TIMER* timer = nullptr;
     ALLEGRO_EVENT_QUEUE* evq = nullptr;
     ALLEGRO_FONT* font = nullptr;
 
-    // Bitmaps
+  
     ALLEGRO_BITMAP* bmpMap, * bmpMapLevel3, * bmpDots, * bmpKey;
     ALLEGRO_BITMAP* bmpPac, * bmpPUp, * bmpPDown, * bmpPLeft, * bmpPRight, * bmpPShut;
     ALLEGRO_BITMAP* bmpBlue, * bmpYellow, * bmpRed, * bmpGreen, * bmpPink;
+
+    
+    ALLEGRO_SAMPLE* sfxBegginning = nullptr;
+    ALLEGRO_SAMPLE* sfxDeath = nullptr;
+    ALLEGRO_SAMPLE* sfxSuspense = nullptr;
+    ALLEGRO_SAMPLE* sfxWaka = nullptr;
+
+    
+    ALLEGRO_SAMPLE_ID wakaLoopID;
+    ALLEGRO_SAMPLE_ID suspenseLoopID;
 
     Map map;
     Pacman* pac = nullptr;
@@ -332,7 +359,7 @@ class Game {
     bool keyAvailable = false;
     bool hasExtraLife = false;
 
-    // Count dots in RAW_MAP
+    
     int countDots() {
         int cnt = 0;
         for (int i = 0; i < 24; i++)
@@ -342,7 +369,29 @@ class Game {
         return cnt;
     }
 
-    // Reset for Level 2
+    
+    void stopLoopingSounds() {
+        al_stop_sample(&wakaLoopID);
+        al_stop_sample(&suspenseLoopID);
+    }
+
+   
+    void startWakaLoop() {
+        stopLoopingSounds();
+        if (sfxWaka && (currentLevel == 1 || currentLevel == 2)) {
+            al_play_sample(sfxWaka, 0.7, 0.0, 1.0, ALLEGRO_PLAYMODE_LOOP, &wakaLoopID);
+        }
+    }
+
+    
+    void startSuspenseLoop() {
+        stopLoopingSounds();
+        if (sfxSuspense && currentLevel == 3) {
+            al_play_sample(sfxSuspense, 0.7, 0.0, 1.0, ALLEGRO_PLAYMODE_LOOP, &suspenseLoopID);
+        }
+    }
+
+    
     void setupLevel2() {
         currentLevel = 2;
         map = Map();
@@ -351,7 +400,7 @@ class Game {
         keyAvailable = true;
         lives = 0;
         hasExtraLife = false;
-        // Key placed in central accessible location
+     
         map.set(10, 11, KEY);
 
         delete pac;
@@ -361,7 +410,8 @@ class Game {
         pac = new Pacman(17, 11,
             bmpPac, bmpPUp, bmpPDown,
             bmpPLeft, bmpPRight, bmpPShut,
-            &bola, &score
+            &bola, &score,
+            sfxWaka        
         );
 
         ghosts.push_back(new RandomGhost(8, 11, bmpYellow, 0));
@@ -369,21 +419,24 @@ class Game {
         ghosts.push_back(new RandomGhost(10, 11, bmpRed, 140));
         ghosts.push_back(new BlinkyGhost(11, 11, bmpGreen, 210));
         ghosts.push_back(new PinkyGhost(8, 9, bmpPink, 280));
+
+        
+        startWakaLoop();
     }
 
-    // Setup for Level 3 (updated with 2 keys in accessible positions)
+
     void setupLevel3() {
         currentLevel = 3;
         map = Map();
         bola = countDots();
         pac->setHasKey(false);
-        keyAvailable = true;  // Enable keys for this level
+        keyAvailable = true;  
         lives = 0;
         hasExtraLife = false;
 
-        // Add 2 keys to the map in accessible positions
-        map.set(10, 5, KEY);    // First key position (top-center)
-        map.set(10, 17, KEY);   // Second key position (bottom-center)
+        
+        map.set(10, 5, KEY);    
+        map.set(10, 17, KEY);   
 
         delete pac;
         for (auto g : ghosts) delete g;
@@ -392,19 +445,22 @@ class Game {
         pac = new Pacman(17, 11,
             bmpPac, bmpPUp, bmpPDown,
             bmpPLeft, bmpPRight, bmpPShut,
-            &bola, &score
+            &bola, &score,
+            nullptr    
         );
 
-        // Add more ghosts for increased difficulty
         ghosts.push_back(new RandomGhost(8, 11, bmpYellow, 0));
         ghosts.push_back(new RandomGhost(9, 11, bmpBlue, 70));
         ghosts.push_back(new RandomGhost(10, 11, bmpRed, 140));
         ghosts.push_back(new BlinkyGhost(11, 11, bmpGreen, 210));
         ghosts.push_back(new PinkyGhost(8, 9, bmpPink, 280));
-        ghosts.push_back(new RandomGhost(7, 11, bmpYellow, 350)); // Additional ghost
+        ghosts.push_back(new RandomGhost(7, 11, bmpYellow, 350)); 
+
+        
+        startSuspenseLoop();
     }
 
-    // Function to reset Pacman and ghosts without resetting the map
+    
     void resetEntities() {
         pac->resetPosition(17, 11);
 
@@ -451,6 +507,16 @@ public:
         if (!al_install_keyboard()) {
             cerr << "ERROR: al_install_keyboard() failed\n"; return false;
         }
+        if (!al_install_audio()) {                   
+            cerr << "ERROR: al_install_audio() failed\n"; return false;
+        }
+        if (!al_init_acodec_addon()) {               
+            cerr << "ERROR: al_init_acodec_addon() failed\n"; return false;
+        }
+        if (!al_reserve_samples(10)) {                
+            cerr << "ERROR: al_reserve_samples() failed\n"; return false;
+        }
+
         al_init_image_addon();
         al_init_font_addon();
         al_init_ttf_addon();
@@ -462,7 +528,7 @@ public:
         evq = al_create_event_queue();
         if (!evq) { cerr << "ERROR: al_create_event_queue() failed\n"; return false; }
 
-        // Load bitmaps
+       
         if (!loadBMP("assets/maps/map.bmp", bmpMap))  return false;
         if (!loadBMP("assets/maps/map23.bmp", bmpMapLevel3))  return false;
         if (!loadBMP("assets/maps/bolas.png", bmpDots)) return false;
@@ -479,7 +545,17 @@ public:
         if (!loadBMP("assets/characters/ghosts/gburro1.png", bmpGreen)) return false;
         if (!loadBMP("assets/characters/ghosts/rosa.png", bmpPink))   return false;
 
-        // Load font
+        
+        sfxBegginning = al_load_sample("assets/sounds/beggining.wav");
+        if (!sfxBegginning) { cerr << "Failed to load beggining.wav\n"; return false; }
+        sfxDeath = al_load_sample("assets/sounds/death.wav");
+        if (!sfxDeath) { cerr << "Failed to load death.wav\n"; return false; }
+        sfxSuspense = al_load_sample("assets/sounds/suspense.wav");
+        if (!sfxSuspense) { cerr << "Failed to load suspense.wav\n"; return false; }
+        sfxWaka = al_load_sample("assets/sounds/waka.wav");
+        if (!sfxWaka) { cerr << "Failed to load waka.wav\n"; return false; }
+
+        
         font = al_load_ttf_font("/usr/share/fonts/truetype/liberation/LiberationMono-Bold.ttf", 28, 0);
         if (!font) {
             font = al_load_ttf_font("C:/Windows/Fonts/OCRAEXT.ttf", 28, 0);
@@ -489,12 +565,13 @@ public:
             }
         }
 
-        // Level 1 setup
+        
         bola = countDots();
         pac = new Pacman(17, 11,
             bmpPac, bmpPUp, bmpPDown,
             bmpPLeft, bmpPRight, bmpPShut,
-            &bola, &score
+            &bola, &score,
+            sfxWaka    
         );
 
         ghosts.push_back(new RandomGhost(8, 11, bmpYellow, 0));
@@ -502,12 +579,19 @@ public:
         ghosts.push_back(new RandomGhost(10, 11, bmpRed, 140));
         ghosts.push_back(new BlinkyGhost(11, 11, bmpGreen, 210));
 
-        // Register events
+       
         al_register_event_source(evq, al_get_display_event_source(display));
         al_register_event_source(evq, al_get_timer_event_source(timer));
         al_register_event_source(evq, al_get_keyboard_event_source());
 
         al_start_timer(timer);
+
+        
+        if (sfxBegginning)
+            al_play_sample(sfxBegginning, 1.0, 0.0, 1.0, ALLEGRO_PLAYMODE_ONCE, nullptr);
+
+        startWakaLoop();
+
         return true;
     }
 
@@ -521,7 +605,7 @@ public:
                 pac->update(map);
                 for (auto g : ghosts) g->moveAlgo(map, *pac, frameCount);
 
-                // Check if key was collected
+                
                 if ((currentLevel == 2 || currentLevel == 3) && pac->getHasKey()) {
                     hasExtraLife = true;
                     pac->setHasKey(false);
@@ -530,7 +614,7 @@ public:
                     lives = 1;
                 }
 
-                // Level transitions
+                
                 if (score >= TARGET_SCORE_LEVEL1 && currentLevel == 1) {
                     setupLevel2();
                     al_rest(1.0);
@@ -542,7 +626,7 @@ public:
                     continue;
                 }
 
-                // Win condition for Level 3
+                
                 if (bola == 0 && currentLevel == 3) {
                     al_draw_bitmap(bmpMapLevel3, 0, 0, 0);
                     al_flip_display();
@@ -551,20 +635,36 @@ public:
                     continue;
                 }
 
-                // Collision check
+                
                 for (auto g : ghosts) {
                     if (g->getGridX() == pac->getGridX() &&
                         g->getGridY() == pac->getGridY())
                     {
                         if (hasExtraLife) {
-                            // Use the extra life
+                            
                             hasExtraLife = false;
                             lives = 0;
                             resetEntities();
+
+           
+                            stopLoopingSounds();
+                            if (sfxDeath)
+                                al_play_sample(sfxDeath, 1.0, 0.0, 1.0, ALLEGRO_PLAYMODE_ONCE, nullptr);
+
+                            
                             al_rest(1.0);
+                            if (currentLevel == 1 || currentLevel == 2) {
+                                startWakaLoop();
+                            }
+                            else if (currentLevel == 3) {
+                                startSuspenseLoop();
+                            }
                         }
                         else {
-                            // Game over
+                            
+                            stopLoopingSounds();
+                            if (sfxDeath)
+                                al_play_sample(sfxDeath, 1.0, 0.0, 1.0, ALLEGRO_PLAYMODE_ONCE, nullptr);
                             gameover = true;
                         }
                     }
@@ -584,7 +684,7 @@ public:
                 redraw = false;
                 al_clear_to_color(al_map_rgb(0, 0, 0));
 
-                // Draw the appropriate map based on level
+                
                 if (currentLevel == 3) {
                     al_draw_bitmap(bmpMapLevel3, 0, 0, 0);
                 }
@@ -592,7 +692,7 @@ public:
                     al_draw_bitmap(bmpMap, 0, 0, 0);
                 }
 
-                // Draw dots & key(s)
+                
                 for (int i = 0; i < 24; i++)
                     for (int j = 0; j < 24; j++) {
                         char c = map.get(i, j);
@@ -651,7 +751,7 @@ public:
         al_destroy_event_queue(evq);
         al_destroy_font(font);
 
-        // Destroy bitmaps
+        
         al_destroy_bitmap(bmpMap);
         al_destroy_bitmap(bmpMapLevel3);
         al_destroy_bitmap(bmpDots);
@@ -667,6 +767,12 @@ public:
         al_destroy_bitmap(bmpRed);
         al_destroy_bitmap(bmpGreen);
         al_destroy_bitmap(bmpPink);
+
+        
+        al_destroy_sample(sfxBegginning);
+        al_destroy_sample(sfxDeath);
+        al_destroy_sample(sfxSuspense);
+        al_destroy_sample(sfxWaka);
     }
 };
 
